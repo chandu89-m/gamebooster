@@ -152,7 +152,7 @@ class SystemMonitor(
                 cpuTempC = temps.first, gpuTempC = temps.second,
                 socTempC = temps.third, batteryTempC = temps.fourth,
                 gpuUsage = gpu, thermalStatus = thermal,
-                cpuGovernor = readPath("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+                cpuGovernor = readPath("/sys/devices/system/cpu/cpufreq/policy0/scaling_governor")
             )
             val spent = SystemClock.elapsedRealtime() - t0
             try { sleep((1000 - spent).coerceAtLeast(200)) } catch (_: InterruptedException) { break }
@@ -187,8 +187,8 @@ class SystemMonitor(
         if (DeviceProfile.isMtk) {
             listOf(
                 "/sys/kernel/ged/hal/gpu_utilization",
+                "/proc/gpufreqv2/gpufreq_status",
                 "/sys/module/ged/parameters/gpu_loading",
-                "/sys/kernel/ged/hal/gpu_loading",
                 "/sys/class/misc/mali0/device/utilization"
             ).forEach { p ->
                 readPath(p)?.let { raw -> parseGed(raw)?.let { return it } }
@@ -198,6 +198,11 @@ class SystemMonitor(
     }
 
     private fun parseGed(raw: String): Float? {
+        val utilMatch = Regex("util[^0-9]*(\\d+)", RegexOption.IGNORE_CASE).find(raw)
+        if (utilMatch != null) {
+            val n = utilMatch.groupValues[1].toFloat()
+            return if (n <= 1f) n else if (n <= 100f) n / 100f else (n / 1000f).coerceIn(0f, 1f)
+        }
         val tok = raw.trim().split(Regex("\\s+")).mapNotNull { it.toFloatOrNull() }
         return when {
             tok.size >= 2 && tok[1] > 0f -> (tok[0] / tok[1]).coerceIn(0f, 1f)
@@ -219,9 +224,9 @@ class SystemMonitor(
             val type = readPath("${z.absolutePath}/type")?.lowercase() ?: continue
             val t = parseTemp(readPath("${z.absolutePath}/temp") ?: continue) ?: continue
             when {
-                cpu == null && type.matches(Regex("(mtktscpu|cpu|cluster|big|little).*")) -> cpu = t
-                gpu == null && type.matches(Regex("(mtktsgpu|gpu).*")) -> gpu = t
-                soc == null && type.matches(Regex("(soc|tsens|mtktsap).*")) -> soc = t
+                cpu == null && type.matches(Regex("(mtktscpu|cpu|cluster|big|little|ap|tsens).*")) -> cpu = t
+                gpu == null && type.matches(Regex("(mtktsgpu|gpu|mali).*")) -> gpu = t
+                soc == null && type.matches(Regex("(soc|tsens|mtktsap|thermal).*")) -> soc = t
             }
         }
         val bi = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
