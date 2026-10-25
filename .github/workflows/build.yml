@@ -24,8 +24,11 @@ jobs:
     - name: Create local properties
       run: echo "sdk.dir=/usr/local/lib/android/sdk" > local.properties
       
+    - name: Generate Gradle Wrapper
+      run: gradle wrapper
+      
     - name: Build APK
-      run: gradle assembleDebug --no-daemon --stacktrace
+      run: ./gradlew :app:assembleDebug --no-daemon
       
     - uses: actions/upload-artifact@v4
       with:
