@@ -38,7 +38,6 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import java.io.File
 import rikka.shizuku.Shizuku
-import rikka.shizuku.Shell
 
 fun onOff(b: Boolean) = if (b) "on" else "off"
 
@@ -50,7 +49,7 @@ object Session {
     @Volatile var batterySaver = true
 }
 
-object Shell {
+object Terminal {
     @Volatile private var rootCache: Boolean? = null
 
     fun ready() = Shizuku.pingBinder() &&
@@ -67,18 +66,23 @@ object Shell {
         return ok
     }
 
-    fun exec(cmd: String): String =
-        if (isRoot()) runCatching {
-            val p = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
+    fun exec(cmd: String): String {
+        if (isRoot()) {
+            return runCatching {
+                val p = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
+                val out = p.inputStream.bufferedReader().use { it.readText() }
+                p.waitFor(); out
+            }.getOrDefault("")
+        }
+        if (!ready()) return ""
+        return runCatching {
+            val method = Shizuku::class.java.getDeclaredMethod("newProcess", java.lang.String[].class, java.lang.String[].class, java.lang.String::class.java)
+            method.isAccessible = true
+            val p = method.invoke(null, arrayOf("sh", "-c", cmd), null, null) as Process
             val out = p.inputStream.bufferedReader().use { it.readText() }
             p.waitFor(); out
         }.getOrDefault("")
-        else if (!ready()) ""
-        else runCatching {
-            val p = Shell.newProcess(arrayOf("sh", "-c", cmd), null, null)
-            val out = p.inputStream.bufferedReader().use { it.readText() }
-            p.waitFor(); out
-        }.getOrDefault("")
+    }
 }
 
 object DeviceProfile {
@@ -128,7 +132,7 @@ class SystemMonitor(
             val t1 = SystemClock.elapsedRealtime()
             var fps = snapshot.fps
             if (gfx >= 0 && lastGfxFrames >= 0 && t1 > lastGfxTime) {
-                fps = ((gfx - lastGfxFrames) * 1000 / (t1 - lastGfxTime)).coerceIn(0, 240)
+                fps = (((gfx - lastGfxFrames) * 1000L) / (t1 - lastGfxTime)).toInt().coerceIn(0, 240)
             }
             if (gfx >= 0) { lastGfxFrames = gfx; lastGfxTime = t1 }
 
@@ -231,15 +235,15 @@ class SystemMonitor(
     }
 
     private fun readGfxFrames(): Int {
-        if (!Shell.ready() && !Shell.isRoot()) return -1
-        val out = Shell.exec("dumpsys gfxinfo $pkg | grep 'Total frames rendered'")
+        if (!Terminal.ready() && !Terminal.isRoot()) return -1
+        val out = Terminal.exec("dumpsys gfxinfo $pkg | grep 'Total frames rendered'")
         return Regex("(\\d+)").find(out)?.groupValues?.get(1)?.toIntOrNull() ?: -1
     }
 
     private fun readPath(path: String): String? = try {
         File(path).readText().trim()
     } catch (_: Exception) {
-        if (Shell.ready() || Shell.isRoot()) Shell.exec("cat $path 2>/dev/null").trim().ifEmpty { null }
+        if (Terminal.ready() || Terminal.isRoot()) Terminal.exec("cat $path 2>/dev/null").trim().ifEmpty { null }
         else null
     }
 }
@@ -275,7 +279,7 @@ object PerfController {
                 sh("settings put system peak_refresh_rate 120", log, "refresh_max=120")
                 sh("am kill-all", log, "bg_cleared")
                 setGovernor("performance", log)
-                if (Shell.isRoot()) {
+                if (Terminal.isRoot()) {
                     pinMaxCpuFreq(log)
                     sh("cmd thermalservice override-status 0", log, "thermal_override")
                     sh("for z in /sys/class/thermal/thermal_zone*; do " +
@@ -287,8 +291,8 @@ object PerfController {
     }
 
     fun hasGameService(): Boolean =
-        (Shell.ready() || Shell.isRoot()) &&
-        Shell.exec("service check game").contains("found", true)
+        (Terminal.ready() || Terminal.isRoot()) &&
+        Terminal.exec("service check game").contains("found", true)
 
     private fun setGovernor(gov: String, log: MutableList<String>) =
         sh("for p in /sys/devices/system/cpu/cpufreq/policy*/scaling_governor; do " +
@@ -302,8 +306,8 @@ object PerfController {
            log, "cpu_pin_max")
 
     private fun sh(cmd: String, log: MutableList<String>, tag: String) {
-        if (!Shell.ready() && !Shell.isRoot()) { log += "$tag: skipped"; return }
-        val out = Shell.exec(cmd).trim()
+        if (!Terminal.ready() && !Terminal.isRoot()) { log += "$tag: skipped"; return }
+        val out = Terminal.exec(cmd).trim()
         log += if (out.isBlank()) "$tag: ok" else "$tag: ${out.take(60)}"
     }
 }
@@ -345,9 +349,9 @@ class BoosterService : Service() {
             button("Reject") { Session.rejectCalls = !Session.rejectCalls; refreshModeLine() },
             button("DND") { toggleDnd() },
             button("Batt") { toggleBatterySaver() },
-            button("Boost") { Shell.exec("am kill-all"); toast("BG cleared") },
-            button("Pop") { Shell.exec("am start --windowingMode 3 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p ${Session.pkg}") },
-            button("Split") { Shell.exec("am start --windowingMode 4 -p ${Session.pkg}") },
+            button("Boost") { Terminal.exec("am kill-all"); toast("BG cleared") },
+            button("Pop") { Terminal.exec("am start --windowingMode 3 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p ${Session.pkg}") },
+            button("Split") { Terminal.exec("am start --windowingMode 4 -p ${Session.pkg}") },
             button("Exit") { stopSelf() }
         )))
         val lp = WindowManager.LayoutParams(
@@ -386,7 +390,7 @@ class BoosterService : Service() {
     }
 
     private fun refreshModeLine() {
-        val p = if (Shell.isRoot()) "root" else if (Shell.ready()) "shizuku" else "off"
+        val p = if (Terminal.isRoot()) "root" else if (Terminal.ready()) "shizuku" else "off"
         modeLine.text = "MODE ${currentMode.label} | reject=${onOff(Session.rejectCalls)} | priv=$p"
     }
     private fun pct(f: Float) = "%3d%%".format((f * 100).toInt())
@@ -401,7 +405,7 @@ class BoosterService : Service() {
         val log = PerfController.apply(mode, Session.pkg)
         Log.i("PerfCtrl", log.joinToString(" | "))
         watchdog?.let { handler.removeCallbacks(it) }
-        if (mode == PerfMode.BEAST && Shell.isRoot()) {
+        if (mode == PerfMode.BEAST && Terminal.isRoot()) {
             val r = object : Runnable {
                 override fun run() {
                     PerfController.apply(PerfMode.BEAST, Session.pkg)
@@ -426,8 +430,8 @@ class BoosterService : Service() {
     }
 
     private fun toggleBatterySaver() {
-        val on = Shell.exec("settings get global low_power").trim()
-        Shell.exec("settings put global low_power ${if (on == "1") 0 else 1}")
+        val on = Terminal.exec("settings get global low_power").trim()
+        Terminal.exec("settings put global low_power ${if (on == "1") 0 else 1}")
     }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
