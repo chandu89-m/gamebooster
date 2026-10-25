@@ -38,6 +38,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import java.io.File
 import rikka.shizuku.Shizuku
+import rikka.shizuku.Shell
 
 fun onOff(b: Boolean) = if (b) "on" else "off"
 
@@ -74,7 +75,7 @@ object Shell {
         }.getOrDefault("")
         else if (!ready()) ""
         else runCatching {
-            val p = Shizuku.newProcess(arrayOf("sh", "-c", cmd), null, null)
+            val p = Shell.newProcess(arrayOf("sh", "-c", cmd), null, null)
             val out = p.inputStream.bufferedReader().use { it.readText() }
             p.waitFor(); out
         }.getOrDefault("")
@@ -163,9 +164,9 @@ class SystemMonitor(
         return cur.mapNotNull { (n, v) ->
             if (n == "cpu") return@mapNotNull null
             val p = prev[n] ?: return@mapNotNull null
-            val curIdle = v.getOrElse(3){0} + v.getOrElse(4){0}
+            val curIdle = v.getOrElse(3) { 0L } + v.getOrElse(4) { 0L }
             val curTot = v.sum()
-            val preIdle = p.getOrElse(3){0} + p.getOrElse(4){0}
+            val preIdle = p.getOrElse(3) { 0L } + p.getOrElse(4) { 0L }
             val preTot = p.sum()
             val dt = curTot - preTot
             val di = curIdle - preIdle
