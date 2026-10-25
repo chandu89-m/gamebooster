@@ -76,7 +76,12 @@ object Terminal {
         }
         if (!ready()) return ""
         return runCatching {
-            val method = Shizuku::class.java.getDeclaredMethod("newProcess", java.lang.String[].class, java.lang.String[].class, java.lang.String::class.java)
+            val method = Shizuku::class.java.getDeclaredMethod(
+                "newProcess",
+                arrayOf<String>().javaClass,
+                arrayOf<String>().javaClass,
+                String::class.java
+            )
             method.isAccessible = true
             val p = method.invoke(null, arrayOf("sh", "-c", cmd), null, null) as Process
             val out = p.inputStream.bufferedReader().use { it.readText() }
